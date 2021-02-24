@@ -6,25 +6,23 @@
 
 const char * display_original = "Display Original";
 const char * display_result = "Display Result";
+const char * display_debug = "Display Debug";
 const int white_threshold = 240;
-const int frame_xoff = -5;
-const int frame_yoff = -5;
-const int frame_height = 200;
-const int frame_width = 270;
 
 using namespace cv;
 using namespace std;
 
 const String keys =
-    "{help h ?       |      | print this message                     }"
-    "{width          | 1640 | set camera width                       }"
-    "{height         | 1232 | set camera height                      }"
-    "{br             | 50.0 | set camera brightness    (0.0 - 100.0) }"
-    "{co             | 50.0 | set camera contrast      (0.0 - 100.0) }"
-    "{sa             | 50.0 | set camera saturation    (0.0 - 100.0) }"
-    "{g              | 50.0 | set camera gain          (0.0 - 100.0) }"
-    "{ss             | 0    | set camera shutter speed (0.0 - 100.0) 0 is auto }"
-    "{wb             | 0    | set camera white balance (0.0 - 100.0) 0 is auto }"
+    "{help h ?       |       | print this message }"
+    "{width          |  1640 | set camera width }"
+    "{height         |  1232 | set camera height }"
+    "{br             |    50 | set camera brightness (0 - 100) }"
+    "{co             |     0 | set camera contrast (-100 - 100) }"
+    "{sa             |     0 | set camera saturation (-100 - 100) }"
+    "{iso            |   100 | set camera gain (100 - 800) }"
+    "{ss             |  1400 | set camera shutter speed (us?) }"
+    "{wb_r           | 2.255 | set camera white balance red (?) }"
+    "{wb_b           | 1.164 | set camera white balance blue (?) }"
     ;
 
 Mat zoom(const Mat &m, float wzoom, float hzoom)
@@ -52,15 +50,14 @@ int main(int argc, char** argv )
     }
 
     raspicam::RaspiCam_Cv cam;
-    cam.set(CV_CAP_PROP_FRAME_WIDTH,          parser.get<int>("width"));
-    cam.set(CV_CAP_PROP_FRAME_HEIGHT,         parser.get<int>("height"));
-    cam.set(CV_CAP_PROP_BRIGHTNESS,           parser.get<double>("br"));
-    cam.set(CV_CAP_PROP_CONTRAST,             parser.get<double>("co"));
-    cam.set(CV_CAP_PROP_SATURATION,           parser.get<double>("sa"));
-    cam.set(CV_CAP_PROP_GAIN,                 parser.get<double>("g"));
-    cam.set(CV_CAP_PROP_EXPOSURE,             parser.get<double>("ss"));
-    cam.set(CV_CAP_PROP_WHITE_BALANCE_RED_V,  parser.get<double>("wb"));
-    cam.set(CV_CAP_PROP_WHITE_BALANCE_BLUE_U, parser.get<double>("wb"));
+    cam.setCaptureSize(parser.get<int>("width"), parser.get<int>("height"));
+    cam.setBrightness(parser.get<int>("br"));
+    cam.setContrast(parser.get<int>("co"));
+    cam.setSaturation(parser.get<int>("sa"));
+    cam.setISO(parser.get<int>("iso"));
+    cam.setShutterSpeed(parser.get<int>("ss"));
+    cam.setAWB(raspicam::RASPICAM_AWB_OFF);
+    cam.setAWB_RB(parser.get<double>("wb_r"), parser.get<double>("wb_b"));
 
     cout<<"Connecting to camera"<<endl;
     if ( !cam.open() ) {
@@ -71,9 +68,13 @@ int main(int argc, char** argv )
 
     namedWindow(display_original, WINDOW_AUTOSIZE);
     namedWindow(display_result, WINDOW_AUTOSIZE);
+    namedWindow(display_debug, WINDOW_AUTOSIZE);
 
-    Point prev_center(0,0);
-    Rect move_rect(-5,-5,10,10);
+    Point center_prev; // previous center, for detecting movement
+    Rect center_move(-5,-5,10,10); // when center moves more than this, movement is detected
+    Rect roi_hole_detect(60, 220, 330, 250);
+    Rect frame_to_center(-5, -5 - (200/2), 270, 200);
+
     int state = 0; // 0=unknown, 1=moving, 2=stopped
     while(1) {
         // Capture raw image from camera
@@ -88,31 +89,35 @@ int main(int argc, char** argv )
         rotate(mCap, mCap, cv::ROTATE_90_CLOCKWISE);
 
         // Select region of interest
-        Rect rRoi(60, 220, 330, 250);
-        Mat mRoi(mCap, rRoi);
+        Mat mRoi = mCap(roi_hole_detect);
 
-        //
+        // Detect hole in roi
         Mat mMask;
         inRange(mRoi, Scalar(white_threshold, white_threshold, white_threshold), Scalar(255, 255, 255), mMask);
-        //imshow(display_result, mMask);
-        
-        Rect box = boundingRect(mMask);
+        Rect hole = boundingRect(mMask);
+        imshow(display_debug, mMask);
 
-        // Validate size of detected box
-        if(box.height > 10
-        && box.height < 100
-        && box.width  > 10
-        && box.width  < 100) {
-            // Valid box found
-            Point center(box.x+box.width, box.y+box.height/2);
-            Rect frame(center.x+frame_xoff, center.y+frame_yoff - frame_height/2, frame_width, frame_height);
+        // Validate size of detected hole
+        if(hole.height > 10
+        && hole.height < 100
+        && hole.width  > 10
+        && hole.width  < 100) {
+            // Valid hole found
+            Point center(hole.x+hole.width, hole.y+hole.height/2);
+            Rect frame = frame_to_center + center;
 
-            if((center - prev_center).inside(move_rect)) {
+            if((center - center_prev).inside(center_move)) {
                 // Frame stopped
                 if(state == 1) {
                     // Frame was moving, this must be the new frame:
                     // - Take the shot!
                     imshow(display_result, Mat(mRoi, frame));
+        
+                    // Debug the average "white" color, used for:
+                    // - white balancing
+                    // - iso and shutter speed calibration
+                    Scalar average = mean(mRoi, mMask);
+                    cout<<average<<endl;
                 }
                 state = 2;
             }
@@ -120,19 +125,19 @@ int main(int argc, char** argv )
                 // Frame moving
                 state = 1;
             }
-            prev_center = center;
+            center_prev = center;
 
             // Draw mRoi
-            rectangle(mCap, rRoi, Scalar(255, 0, 0), 1);
+            rectangle(mCap, roi_hole_detect, Scalar(255, 0, 0), 1);
             
             // Draw in mRoi
-            rectangle(mRoi, box, Scalar(255, 0, 0), (state == 2) ? -1 : 1);
+            rectangle(mRoi, hole, Scalar(255, 0, 0), (state == 2) ? -1 : 1);
             circle(mRoi, center, 10, Scalar(255, 0, 0), 1);
             rectangle(mRoi, frame, Scalar(0, 255, 0), 1);
         }
         else {
             // Invalidate the center, frame is moving
-            prev_center = Point(0, 0);
+            center_prev = Point(0, 0);
             state = 1;
         }
 
