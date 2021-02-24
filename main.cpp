@@ -1,4 +1,3 @@
-#include <stdio.h>
 #include <iostream>
 
 #include <opencv2/opencv.hpp>
@@ -16,6 +15,18 @@ const int frame_width = 270;
 using namespace cv;
 using namespace std;
 
+const String keys =
+    "{help h ?       |      | print this message                     }"
+    "{width          | 1640 | set camera width                       }"
+    "{height         | 1232 | set camera height                      }"
+    "{br             | 50.0 | set camera brightness    (0.0 - 100.0) }"
+    "{co             | 50.0 | set camera contrast      (0.0 - 100.0) }"
+    "{sa             | 50.0 | set camera saturation    (0.0 - 100.0) }"
+    "{g              | 50.0 | set camera gain          (0.0 - 100.0) }"
+    "{ss             | 0    | set camera shutter speed (0.0 - 100.0) 0 is auto }"
+    "{wb             | 0    | set camera white balance (0.0 - 100.0) 0 is auto }"
+    ;
+
 Mat zoom(const Mat &m, float wzoom, float hzoom)
 {
     int width  = (float)m.cols / wzoom;
@@ -27,82 +38,36 @@ Mat zoom(const Mat &m, float wzoom, float hzoom)
         height));
 }
 
-//parse command line
-//returns the index of a command line param in argv. If not found, return -1
-int findParam ( string param,int argc,char **argv ) {
-    int idx=-1;
-    for ( int i=0; i<argc && idx==-1; i++ )
-        if ( string ( argv[i] ) ==param ) idx=i;
-    return idx;
-
-}
-//parse command line
-//returns the value of a command line param. If not found, defvalue is returned
-float getParamVal ( string param,int argc,char **argv,float defvalue=-1 ) {
-    int idx=-1;
-    for ( int i=0; i<argc && idx==-1; i++ )
-        if ( string ( argv[i] ) ==param ) idx=i;
-    if ( idx==-1 ) return defvalue;
-    else return atof ( argv[  idx+1] );
-}
-
-void processCommandLine ( int argc,char **argv,raspicam::RaspiCam_Cv &Camera ) {
-    Camera.set ( CV_CAP_PROP_FRAME_WIDTH,  getParamVal ( "-w",argc,argv,1280 ) );
-    Camera.set ( CV_CAP_PROP_FRAME_HEIGHT, getParamVal ( "-h",argc,argv,960 ) );
-    Camera.set ( CV_CAP_PROP_BRIGHTNESS,getParamVal ( "-br",argc,argv,50 ) );
-    Camera.set ( CV_CAP_PROP_CONTRAST ,getParamVal ( "-co",argc,argv,50 ) );
-    Camera.set ( CV_CAP_PROP_SATURATION, getParamVal ( "-sa",argc,argv,50 ) );
-    Camera.set ( CV_CAP_PROP_GAIN, getParamVal ( "-g",argc,argv ,50 ) );
-    if ( findParam ( "-gr",argc,argv ) !=-1 )
-        Camera.set ( CV_CAP_PROP_FORMAT, CV_8UC1 );
-    if ( findParam ( "-ss",argc,argv ) !=-1 )
-        Camera.set ( CV_CAP_PROP_EXPOSURE, getParamVal ( "-ss",argc,argv )  );
-    if ( findParam ( "-wb_r",argc,argv ) !=-1 )
-        Camera.set ( CV_CAP_PROP_WHITE_BALANCE_RED_V,getParamVal ( "-wb_r",argc,argv )     );
-    if ( findParam ( "-wb_b",argc,argv ) !=-1 )
-        Camera.set ( CV_CAP_PROP_WHITE_BALANCE_BLUE_U,getParamVal ( "-wb_b",argc,argv )     );
-
-
-//     Camera.setSharpness ( getParamVal ( "-sh",argc,argv,0 ) );
-//     if ( findParam ( "-vs",argc,argv ) !=-1 )
-//         Camera.setVideoStabilization ( true );
-//     Camera.setExposureCompensation ( getParamVal ( "-ev",argc,argv ,0 ) );
-
-
-}
-
-void showUsage() {
-    cout<<"Usage: "<<endl;
-    cout<<"[-gr set gray color capture]\n";
-    cout<<"[-test_speed use for test speed and no images will be saved]\n";
-    cout<<"[-w width] [-h height] \n[-br brightness_val(0,100)]\n";
-    cout<<"[-co contrast_val (0 to 100)]\n[-sa saturation_val (0 to 100)]";
-    cout<<"[-g gain_val  (0 to 100)]\n";
-    cout<<"[-ss shutter_speed (0 to 100) 0 auto]\n";
-    cout<<"[-wb_r val  (0 to 100),0 auto: white balance red component]\n";
-    cout<<"[-wb_b val  (0 to 100),0 auto: white balance blue component]\n";
-
-    cout<<endl;
-}
-
 int main(int argc, char** argv )
 {
-    if ( argc==1 ) {
-        cerr<<"Usage (-help for help)"<<endl;
+    CommandLineParser parser(argc, argv, keys);
+    parser.about("Super8 Filmscanner v1.0.0");
+    if (!parser.check()) {
+        parser.printErrors();
+        return 0;
     }
-    if ( findParam ( "-help",argc,argv ) !=-1 ) {
-        showUsage();
-        return -1;
+    if (parser.has("help")) {
+        parser.printMessage();
+        return 0;
     }
 
-    raspicam::RaspiCam_Cv Camera;
-    processCommandLine ( argc,argv,Camera );
+    raspicam::RaspiCam_Cv cam;
+    cam.set(CV_CAP_PROP_FRAME_WIDTH,          parser.get<int>("width"));
+    cam.set(CV_CAP_PROP_FRAME_HEIGHT,         parser.get<int>("height"));
+    cam.set(CV_CAP_PROP_BRIGHTNESS,           parser.get<double>("br"));
+    cam.set(CV_CAP_PROP_CONTRAST,             parser.get<double>("co"));
+    cam.set(CV_CAP_PROP_SATURATION,           parser.get<double>("sa"));
+    cam.set(CV_CAP_PROP_GAIN,                 parser.get<double>("g"));
+    cam.set(CV_CAP_PROP_EXPOSURE,             parser.get<double>("ss"));
+    cam.set(CV_CAP_PROP_WHITE_BALANCE_RED_V,  parser.get<double>("wb"));
+    cam.set(CV_CAP_PROP_WHITE_BALANCE_BLUE_U, parser.get<double>("wb"));
+
     cout<<"Connecting to camera"<<endl;
-    if ( !Camera.open() ) {
+    if ( !cam.open() ) {
         cerr<<"Error opening camera"<<endl;
         return -1;
     }
-    cout<<"Connected to camera ="<<Camera.getId() <<endl;
+    cout<<"Connected to camera ="<<cam.getId() <<endl;
 
     namedWindow(display_original, WINDOW_AUTOSIZE);
     namedWindow(display_result, WINDOW_AUTOSIZE);
@@ -113,8 +78,8 @@ int main(int argc, char** argv )
     while(1) {
         // Capture raw image from camera
         Mat mCap;
-        Camera.grab();
-        Camera.retrieve(mCap);
+        cam.grab();
+        cam.retrieve(mCap);
 
         // TODO: get a zoom lens
         mCap = zoom(mCap, 2.0f, 2.0f);
@@ -176,7 +141,7 @@ int main(int argc, char** argv )
             break;
     }
     
-    Camera.release();
+    cam.release();
 
     return 0;
 }
